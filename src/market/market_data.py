@@ -21,6 +21,32 @@ class MarketData:
         self.running = False
         self.logger = logging.getLogger('market_data')
         
+        # 设置市场类型
+        self.exchange.options['defaultType'] = 'swap'
+        self.exchange.options['defaultSubType'] = 'linear'
+        self.exchange.options['broker'] = 'CCXT'
+        
+        # 设置WebSocket配置
+        self.exchange.options['ws'] = {
+            'url': 'wss://api.hbdm.vn/linear-swap-ws',
+            'options': {
+                'defaultType': 'swap',
+                'defaultSubType': 'linear',
+                'watchOrderBook': {
+                    'method': 'watchOrderBookForLinearSwap',
+                    'limit': 20,
+                    'snapshotDelay': 5
+                }
+            }
+        }
+        
+        # 设置API URL
+        self.exchange.urls['api'] = {
+            'public': 'https://api.hbdm.vn/linear-swap-api/v1',
+            'private': 'https://api.hbdm.vn/linear-swap-api/v1',
+            'ws': 'wss://api.hbdm.vn/linear-swap-ws'
+        }
+        
         # 连接状态
         self.last_orderbook_update = None
         self.last_ticker_update = None
@@ -29,31 +55,61 @@ class MarketData:
         self.reconnect_delay = 1  # 重连延迟（秒）
         self.max_reconnect_delay = 30  # 最大重连延迟（秒）
         
+        # 市场信息
+        self.market_info = None
+        
+        # 任务
+        self.orderbook_task = None
+        self.ticker_task = None
+        self.trades_task = None
+        self.monitor_task = None
+        
     async def start(self):
         """启动市场数据订阅"""
-        self.running = True
-        
-        # 启动数据订阅
-        self.orderbook_task = asyncio.create_task(self.watch_orderbook())
-        self.ticker_task = asyncio.create_task(self.watch_ticker())
-        self.trades_task = asyncio.create_task(self.watch_trades())
-        
-        # 启动连接监控
-        self.monitor_task = asyncio.create_task(self.monitor_connection())
+        try:
+            self.running = True
+            
+            # 获取市场信息
+            self.market_info = self.exchange.market(self.symbol)
+            self.logger.info(f"Market info loaded for {self.symbol}: {self.market_info}")
+            
+            # 启动数据订阅
+            self.orderbook_task = asyncio.create_task(self.watch_orderbook())
+            self.ticker_task = asyncio.create_task(self.watch_ticker())
+            self.trades_task = asyncio.create_task(self.watch_trades())
+            
+            # 启动连接监控
+            self.monitor_task = asyncio.create_task(self.monitor_connection())
+            
+        except Exception as e:
+            self.logger.error(f"Error starting market data: {str(e)}")
+            await self.stop()
+            raise
         
     async def stop(self):
         """停止市场数据订阅"""
         self.running = False
         
         # 取消所有任务
-        tasks = [self.orderbook_task, self.ticker_task, self.trades_task, self.monitor_task]
+        tasks = []
+        if hasattr(self, 'orderbook_task') and self.orderbook_task:
+            tasks.append(self.orderbook_task)
+        if hasattr(self, 'ticker_task') and self.ticker_task:
+            tasks.append(self.ticker_task)
+        if hasattr(self, 'trades_task') and self.trades_task:
+            tasks.append(self.trades_task)
+        if hasattr(self, 'monitor_task') and self.monitor_task:
+            tasks.append(self.monitor_task)
+            
         for task in tasks:
-            if task and not task.done():
+            if not task.done():
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
+                except Exception as e:
+                    self.logger.error(f"Error cancelling task: {str(e)}")
         
     async def monitor_connection(self):
         """监控数据连接状态"""
@@ -98,9 +154,12 @@ class MarketData:
         while self.running:
             try:
                 orderbook = await self.exchange.watch_order_book(self.symbol)
-                self.orderbook = orderbook
-                self.last_orderbook_update = datetime.now()
-                retry_delay = self.reconnect_delay  # 重置重连延迟
+                if self.validate_orderbook(orderbook):
+                    self.orderbook = orderbook
+                    self.last_orderbook_update = datetime.now()
+                    retry_delay = self.reconnect_delay  # 重置重连延迟
+                else:
+                    self.logger.warning("Invalid orderbook data received")
                 
             except ccxt.NetworkError as e:
                 self.logger.error(f"Network error in orderbook subscription: {str(e)}")
@@ -116,6 +175,20 @@ class MarketData:
                 self.logger.error(f"Unexpected error in orderbook subscription: {str(e)}")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, self.max_reconnect_delay)
+                
+    def validate_orderbook(self, orderbook: Dict) -> bool:
+        """验证订单簿数据有效性"""
+        try:
+            if not orderbook or 'bids' not in orderbook or 'asks' not in orderbook:
+                return False
+            if not orderbook['bids'] or not orderbook['asks']:
+                return False
+            if float(orderbook['asks'][0][0]) <= float(orderbook['bids'][0][0]):
+                return False
+            return True
+        except Exception as e:
+            self.logger.error(f"Orderbook validation error: {str(e)}")
+            return False
                 
     async def watch_ticker(self):
         """订阅ticker数据"""
@@ -188,4 +261,8 @@ class MarketData:
         if (self.last_trades_update and 
             datetime.now() - self.last_trades_update > self.max_data_age):
             return []
-        return self.trades 
+        return self.trades
+        
+    def get_market_info(self) -> Dict:
+        """获取市场信息"""
+        return self.market_info 

@@ -43,6 +43,30 @@ async def main():
             'gamma': float(os.getenv('GAMMA', '0.1')),
             'sigma': float(os.getenv('SIGMA', '0.1')),
             'delta': float(os.getenv('DELTA', '0.1')),
+            'exchange_options': {
+                'defaultType': 'swap',
+                'defaultSubType': 'linear',
+                'broker': 'CCXT',
+                'ws': {
+                    'url': 'wss://api.hbdm.vn/linear-swap-ws',
+                    'options': {
+                        'defaultType': 'swap',
+                        'defaultSubType': 'linear',
+                        'watchOrderBook': {
+                            'method': 'watchOrderBookForLinearSwap',
+                            'limit': 20,
+                            'snapshotDelay': 5
+                        }
+                    }
+                }
+            },
+            'exchange_urls': {
+                'api': {
+                    'public': 'https://api.hbdm.vn/linear-swap-api/v1',
+                    'private': 'https://api.hbdm.vn/linear-swap-api/v1',
+                    'ws': 'wss://api.hbdm.vn/linear-swap-ws'
+                }
+            }
         }
         
         logger.info("Starting market maker with configuration:")

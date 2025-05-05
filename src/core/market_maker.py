@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import asyncio
 import logging
 from typing import Dict, Optional
@@ -36,20 +38,28 @@ class MarketMaker:
         self.config = config
         
         # 初始化交易所连接
-        exchange_class = getattr(ccxtpro, exchange_id)
-        self.exchange = exchange_class({
+        exchange_options = {
             'apiKey': api_key,
             'secret': secret,
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'swap',
-                'defaultSubType': 'linear',
-                'createMarketBuyOrderRequiresPrice': False,
-                'defaultNetwork': 'main',
-                'adjustForTimeDifference': True,
-                'recvWindow': 5000
+                'defaultType': 'swap'
             }
-        })
+        }
+        
+        # 创建交易所实例
+        self.exchange = ccxtpro.htx(exchange_options)
+        
+        # 设置API URLs
+        self.exchange.urls['api'] = {
+            'public': 'https://api.hbdm.vn/linear-swap-api/v1',
+            'private': 'https://api.hbdm.vn/linear-swap-api/v1',
+            'ws': 'wss://api.hbdm.vn/linear-swap-ws'
+        }
+        
+        # 设置市场类型
+        self.exchange.options['defaultType'] = 'swap'
+        # self.exchange.options['defaultSubType'] = 'linear-swap'
         
         # 初始化各个组件
         self.market_data = MarketData(self.exchange, symbol)
@@ -87,6 +97,10 @@ class MarketMaker:
                 await self.market_data.start()
                 self.logger.info("Market data subscription started")
                 
+                # 获取市场信息
+                market_info = self.market_data.get_market_info()
+                self.logger.info(f"Market info: {market_info}")
+                
                 # 重置重试计数
                 retry_count = 0
                 
@@ -100,11 +114,6 @@ class MarketMaker:
                             await asyncio.sleep(1)
                             continue
                         
-                        # 验证订单簿数据
-                        if not self.validate_orderbook(orderbook):
-                            self.logger.warning("Invalid orderbook data, skipping iteration")
-                            continue
-                            
                         # 获取当前持仓
                         positions = await self.order_manager.get_positions()
                         current_position = float(positions.get(self.symbol, {}).get('contracts', 0))
@@ -183,20 +192,6 @@ class MarketMaker:
             self.logger.error(f"API connection validation failed: {str(e)}")
             raise
     
-    def validate_orderbook(self, orderbook: Dict) -> bool:
-        """验证订单簿数据有效性"""
-        try:
-            if not orderbook or 'bids' not in orderbook or 'asks' not in orderbook:
-                return False
-            if not orderbook['bids'] or not orderbook['asks']:
-                return False
-            if float(orderbook['asks'][0][0]) <= float(orderbook['bids'][0][0]):
-                return False
-            return True
-        except Exception as e:
-            self.logger.error(f"Orderbook validation error: {str(e)}")
-            return False
-    
     async def stop(self):
         """停止做市商策略"""
         self.running = False
@@ -204,6 +199,9 @@ class MarketMaker:
         
         # 取消所有订单
         await self.order_manager.cancel_all_orders()
+        
+        # 关闭市场数据订阅
+        await self.market_data.stop()
         
         # 关闭交易所连接
         await self.exchange.close() 

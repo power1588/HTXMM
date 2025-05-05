@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import asyncio
 import logging
 from typing import Dict, List, Optional
@@ -14,107 +16,157 @@ class OrderManager:
         """
         self.exchange = exchange
         self.symbol = symbol
-        self.orders = {}
         self.logger = logging.getLogger('order_manager')
+        
+        # 设置市场类型
+        self.exchange.options['defaultType'] = 'swap'
+        self.exchange.options['defaultSubType'] = 'linear'
+        self.exchange.options['broker'] = 'CCXT'
+        
+        # 设置WebSocket配置
+        self.exchange.options['ws'] = {
+            'url': 'wss://api.hbdm.vn/linear-swap-ws',
+            'options': {
+                'defaultType': 'swap',
+                'defaultSubType': 'linear',
+                'watchOrderBook': {
+                    'method': 'watchOrderBookForLinearSwap',
+                    'limit': 20,
+                    'snapshotDelay': 5
+                }
+            }
+        }
+        
+        # 设置API URL
+        self.exchange.urls['api'] = {
+            'public': 'https://api.hbdm.vn/linear-swap-api/v1',
+            'private': 'https://api.hbdm.vn/linear-swap-api/v1',
+            'ws': 'wss://api.hbdm.vn/linear-swap-ws'
+        }
         
     async def get_positions(self) -> Dict:
         """获取当前持仓"""
         try:
             positions = await self.exchange.fetch_positions([self.symbol])
-            return {p['symbol']: p for p in positions}
+            return {pos['symbol']: pos for pos in positions if pos['symbol'] == self.symbol}
         except Exception as e:
             self.logger.error(f"Error fetching positions: {str(e)}")
             return {}
             
-    async def get_open_orders(self) -> List[Dict]:
-        """获取当前未成交订单"""
+    async def get_open_orders(self) -> List:
+        """获取未成交订单"""
         try:
-            orders = await self.exchange.fetch_open_orders(self.symbol)
-            return orders
+            return await self.exchange.fetch_open_orders(self.symbol)
         except Exception as e:
             self.logger.error(f"Error fetching open orders: {str(e)}")
             return []
             
-    async def place_order(self, order: Dict) -> Optional[Dict]:
-        """下单"""
-        max_retries = 3
-        retry_count = 0
+    async def create_order(self, order_type: str, side: str, amount: float, price: Optional[float] = None) -> Dict:
+        """
+        创建订单
         
-        while retry_count < max_retries:
-            try:
-                result = await self.exchange.create_order(
-                    symbol=self.symbol,
-                    type=order['type'],
-                    side=order['side'],
-                    amount=order['amount'],
-                    price=order['price']
-                )
-                self.orders[result['id']] = result
-                return result
-            except Exception as e:
-                retry_count += 1
-                if retry_count == max_retries:
-                    self.logger.error(f"Failed to place order after {max_retries} retries: {str(e)}")
-                    return None
-                else:
-                    self.logger.warning(f"Retry {retry_count}/{max_retries} placing order: {str(e)}")
-                    await asyncio.sleep(1)
-                    
-    async def cancel_order(self, order_id: str) -> bool:
-        """取消订单"""
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                await self.exchange.cancel_order(order_id, self.symbol)
-                if order_id in self.orders:
-                    del self.orders[order_id]
-                return True
-            except Exception as e:
-                retry_count += 1
-                if retry_count == max_retries:
-                    self.logger.error(f"Failed to cancel order after {max_retries} retries: {str(e)}")
-                    return False
-                else:
-                    self.logger.warning(f"Retry {retry_count}/{max_retries} canceling order: {str(e)}")
-                    await asyncio.sleep(1)
-                    
-    async def cancel_all_orders(self):
-        """取消所有订单"""
-        try:
-            orders = await self.get_open_orders()
-            for order in orders:
-                await self.cancel_order(order['id'])
-        except Exception as e:
-            self.logger.error(f"Error canceling all orders: {str(e)}")
+        Args:
+            order_type: 订单类型 ('limit' 或 'market')
+            side: 交易方向 ('buy' 或 'sell')
+            amount: 交易数量
+            price: 价格 (限价单必需)
             
-    async def update_orders(self, target_orders: List[Dict]):
-        """更新订单簿"""
+        Returns:
+            订单信息
+        """
+        try:
+            params = {
+                'type': 'swap',
+                'subType': 'linear'
+            }
+            
+            if order_type == 'limit':
+                if not price:
+                    raise ValueError("Price is required for limit orders")
+                return await self.exchange.create_order(
+                    self.symbol,
+                    order_type,
+                    side,
+                    amount,
+                    price,
+                    params
+                )
+            else:
+                return await self.exchange.create_order(
+                    self.symbol,
+                    order_type,
+                    side,
+                    amount,
+                    None,
+                    params
+                )
+        except Exception as e:
+            self.logger.error(f"Error creating order: {str(e)}")
+            return None
+            
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        取消订单
+        
+        Args:
+            order_id: 订单ID
+            
+        Returns:
+            是否成功取消
+        """
+        try:
+            await self.exchange.cancel_order(order_id, self.symbol)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error cancelling order: {str(e)}")
+            return False
+            
+    async def cancel_all_orders(self) -> bool:
+        """
+        取消所有订单
+        
+        Returns:
+            是否成功取消所有订单
+        """
+        try:
+            params = {
+                'type': 'swap',
+                'subType': 'linear'
+            }
+            await self.exchange.cancel_all_orders(self.symbol, params=params)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error cancelling all orders: {str(e)}")
+            return False
+            
+    async def update_orders(self, target_orders: List[Dict]) -> bool:
+        """
+        更新订单
+        
+        Args:
+            target_orders: 目标订单列表
+            
+        Returns:
+            是否成功更新所有订单
+        """
         try:
             # 获取当前未成交订单
             current_orders = await self.get_open_orders()
-            current_order_ids = {order['id'] for order in current_orders}
             
-            # 取消不需要的订单
-            for order in current_orders:
-                if not any(
-                    t['side'] == order['side'] and
-                    t['price'] == order['price'] and
-                    t['amount'] == order['amount']
-                    for t in target_orders
-                ):
-                    await self.cancel_order(order['id'])
-                    
-            # 下新订单
+            # 取消所有当前订单
+            if current_orders:
+                await self.cancel_all_orders()
+            
+            # 创建新订单
             for order in target_orders:
-                if not any(
-                    c['side'] == order['side'] and
-                    c['price'] == order['price'] and
-                    c['amount'] == order['amount']
-                    for c in current_orders
-                ):
-                    await self.place_order(order)
-                    
+                await self.create_order(
+                    order['type'],
+                    order['side'],
+                    order['amount'],
+                    order.get('price')
+                )
+                
+            return True
         except Exception as e:
-            self.logger.error(f"Error updating orders: {str(e)}") 
+            self.logger.error(f"Error updating orders: {str(e)}")
+            return False 
