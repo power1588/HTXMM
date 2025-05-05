@@ -20,8 +20,8 @@
 
 1. 克隆仓库：
 ```bash
-git clone https://github.com/yourusername/HTXCCXT.git
-cd HTXCCXT
+git clone https://github.com/power1588/HTXMM.git
+cd HTXMM
 ```
 
 2. 创建并激活虚拟环境：
@@ -95,4 +95,4 @@ python run_strategy.py
 
 ## 许可证
 
-MIT License 
+MIT License
