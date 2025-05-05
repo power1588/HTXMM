@@ -58,6 +58,30 @@ SECRET=your_secret
 python run_strategy.py
 ```
 
+## API测试
+
+项目包含完整的API测试套件，可以测试HTX永续合约API的功能：
+
+1. 确保已设置环境变量：
+```bash
+export HTX_API_KEY=your_api_key
+export HTX_SECRET_KEY=your_secret
+```
+
+2. 运行测试：
+```bash
+# 运行所有测试
+pytest
+
+# 运行特定测试
+pytest tests/test_htx_api_live.py::test_place_eth_order_at_1790 -v
+```
+
+测试包括：
+- 公共接口测试（合约信息、深度数据、K线数据）
+- 账户和持仓信息测试
+- 订单操作测试（下单、查询、撤单）
+
 ## 配置参数
 
 - `order_update_interval`: 订单更新间隔(秒)
